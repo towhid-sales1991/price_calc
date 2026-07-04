@@ -408,6 +408,13 @@
     color: var(--teal-b);
   }
   .price-val.empty { color: var(--ink-4); font-size: 12px; }
+  .extra-val {
+    font-family: 'DM Mono', monospace;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink-3);
+  }
+  .extra-val.empty { color: var(--ink-4); font-size: 12px; }
 
   /* ── TOTAL ROW ── */
   .total-row { background: var(--ink) !important; }
@@ -699,6 +706,7 @@
           <th>ITEM <span style="opacity:.5;font-size:8px">(name/code)</span></th>
           <th>CM <span style="opacity:.5;font-size:8px">(optional)</span></th>
           <th>INCH <span style="opacity:.5;font-size:8px">(enter or auto)</span></th>
+          <th>EXTRA / INCH <span style="opacity:.5;font-size:8px">(beyond base)</span></th>
           <th>PRICE / 100 PCS (USD)</th>
         </tr>
       </thead>
@@ -816,6 +824,7 @@ function appendRow(i) {
       <span class="auto-tag" id="autotag-${i}" style="display:none">AUTO</span>
       <span class="auto-tag default-tag" id="defaulttag-${i}" style="display:none">BASE (default)</span>
     </td>
+    <td><span class="extra-val empty" id="extra-${i}">—</span></td>
     <td><span class="price-val empty" id="price-${i}">—</span></td>
   `;
   tbody.appendChild(tr);
@@ -884,18 +893,23 @@ function recalcRow(i, cmInp, inchInp, itemInp) {
   const itemVal = itemInp ? itemInp.value.trim() : '';
   const result  = computeRowOrDefault(itemVal, cmVal, inchVal, p);
 
-  const priceEl   = document.getElementById(`price-${i}`);
+  const priceEl    = document.getElementById(`price-${i}`);
+  const extraEl    = document.getElementById(`extra-${i}`);
   const defaultTag = document.getElementById(`defaulttag-${i}`);
 
   if (!result) {
     priceEl.textContent = '—';
     priceEl.className   = 'price-val empty';
+    extraEl.textContent = '—';
+    extraEl.className   = 'extra-val empty';
     if (defaultTag) defaultTag.style.display = 'none';
     return null;
   }
 
   priceEl.textContent = fmt(result.price);
   priceEl.className   = 'price-val';
+  extraEl.textContent = fmt(p.addRate * p.defQty / 100) + ' /in';
+  extraEl.className   = 'extra-val';
   if (defaultTag) defaultTag.style.display = result.isDefault ? 'inline' : 'none';
   return result;
 }
@@ -962,6 +976,7 @@ function exportPDF() {
       itemVal || '-',
       cmVal !== '' ? cmVal : '-',
       result.effInch.toFixed(2) + (result.isDefault ? ' (base)' : ''),
+      fmt(p.addRate * p.defQty / 100) + ' /in',
       fmt(result.price)
     ]);
   });
@@ -1039,18 +1054,19 @@ function exportPDF() {
   if (body.length > 0) {
     doc.autoTable({
       startY: y,
-      head: [['#', 'Item', 'CM', 'Inch', `Price / ${p.defQty} pcs (USD)`]],
+      head: [['#', 'Item', 'CM', 'Inch', 'Extra/Inch (USD)', `Price / ${p.defQty} pcs (USD)`]],
       body: body,
       margin: { left: margin, right: margin },
       tableWidth: pageWidth - margin * 2,
       styles: { font: 'helvetica', fontSize: 10, cellPadding: 6, textColor: [13, 13, 13], lineColor: [226, 228, 238], lineWidth: 0.5 },
       headStyles: { fillColor: [13, 13, 13], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 30 },
+        0: { halign: 'center', cellWidth: 26 },
         1: { halign: 'left' },
-        2: { halign: 'center', cellWidth: 70 },
-        3: { halign: 'center', cellWidth: 70 },
-        4: { halign: 'right', cellWidth: 130, textColor: [26, 138, 114], fontStyle: 'bold' }
+        2: { halign: 'center', cellWidth: 55 },
+        3: { halign: 'center', cellWidth: 65 },
+        4: { halign: 'center', cellWidth: 85, textColor: [90, 90, 100] },
+        5: { halign: 'right', cellWidth: 110, textColor: [26, 138, 114], fontStyle: 'bold' }
       },
       alternateRowStyles: { fillColor: [246, 247, 251] }
     });

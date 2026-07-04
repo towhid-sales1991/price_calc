@@ -397,6 +397,10 @@
     vertical-align: middle;
     letter-spacing: .03em;
   }
+  .default-tag {
+    background: #F0EAFB;
+    color: #6B3FA0;
+  }
   .price-val {
     font-family: 'DM Mono', monospace;
     font-size: 14px;
@@ -810,11 +814,13 @@ function appendRow(i) {
       <input class="cell-input inch-input" type="text" inputmode="decimal"
              placeholder="e.g. 5.75" data-idx="${i}" data-field="inch" />
       <span class="auto-tag" id="autotag-${i}" style="display:none">AUTO</span>
+      <span class="auto-tag default-tag" id="defaulttag-${i}" style="display:none">BASE (default)</span>
     </td>
     <td><span class="price-val empty" id="price-${i}">—</span></td>
   `;
   tbody.appendChild(tr);
 
+  const itemInp = tr.querySelector('.item-input');
   const cmInp   = tr.querySelector('.cm-input');
   const inchInp = tr.querySelector('.inch-input');
 
@@ -834,11 +840,12 @@ function appendRow(i) {
       inchInp.style.cursor  = '';
       document.getElementById(`autotag-${i}`).style.display = 'none';
     }
-    recalcRow(i, cmInp, inchInp);
+    recalcRow(i, cmInp, inchInp, itemInp);
     recalcTotals();
   });
 
-  inchInp.addEventListener('input', () => { recalcRow(i, cmInp, inchInp); recalcTotals(); });
+  inchInp.addEventListener('input', () => { recalcRow(i, cmInp, inchInp, itemInp); recalcTotals(); });
+  itemInp.addEventListener('input', () => { recalcRow(i, cmInp, inchInp, itemInp); recalcTotals(); });
 }
 
 function computeRow(cmVal, inchVal, p) {
@@ -853,25 +860,43 @@ function computeRow(cmVal, inchVal, p) {
   if (effInch === null || isNaN(qty) || qty <= 0) return null;
 
   const price = (Math.max(0, effInch - p.baseLen) * p.addRate + p.basePrice) * qty / 100;
-  return { effInch, qty, price };
+  return { effInch, qty, price, isDefault: false };
 }
 
-function recalcRow(i, cmInp, inchInp) {
+// Falls back to Base Length pricing (no extra inch charge) when an item
+// name has been entered but no specific CM/Inch length was given.
+function computeRowOrDefault(itemVal, cmVal, inchVal, p) {
+  const result = computeRow(cmVal, inchVal, p);
+  if (result) return result;
+
+  if (itemVal && itemVal.trim() !== '') {
+    const qty   = p.defQty;
+    const price = p.basePrice * qty / 100;
+    return { effInch: p.baseLen, qty, price, isDefault: true };
+  }
+  return null;
+}
+
+function recalcRow(i, cmInp, inchInp, itemInp) {
   const p       = params();
   const cmVal   = cmInp.value.trim();
   const inchVal = inchInp.value.trim();
-  const result  = computeRow(cmVal, inchVal, p);
+  const itemVal = itemInp ? itemInp.value.trim() : '';
+  const result  = computeRowOrDefault(itemVal, cmVal, inchVal, p);
 
-  const priceEl = document.getElementById(`price-${i}`);
+  const priceEl   = document.getElementById(`price-${i}`);
+  const defaultTag = document.getElementById(`defaulttag-${i}`);
 
   if (!result) {
     priceEl.textContent = '—';
     priceEl.className   = 'price-val empty';
+    if (defaultTag) defaultTag.style.display = 'none';
     return null;
   }
 
   priceEl.textContent = fmt(result.price);
   priceEl.className   = 'price-val';
+  if (defaultTag) defaultTag.style.display = result.isDefault ? 'inline' : 'none';
   return result;
 }
 
@@ -894,7 +919,7 @@ function clearAll() {
 function recalcAll() {
   document.querySelectorAll('#tableBody tr').forEach(tr => {
     const i = parseInt(tr.dataset.idx);
-    recalcRow(i, tr.querySelector('.cm-input'), tr.querySelector('.inch-input'));
+    recalcRow(i, tr.querySelector('.cm-input'), tr.querySelector('.inch-input'), tr.querySelector('.item-input'));
   });
   recalcTotals();
   updateReferenceBoxes();
@@ -918,7 +943,7 @@ function exportPDF() {
   const buyerName    = document.getElementById('buyerName').value.trim();
   const shippingTerm = document.getElementById('shippingTerm').value.trim();
 
-  // Gather only rows that actually have a calculable price (specific lengths entered)
+  // Gather rows: specific-length rows AND item-only rows (fall back to Base Length pricing)
   const body = [];
   document.querySelectorAll('#tableBody tr').forEach(tr => {
     const itemInp = tr.querySelector('.item-input');
@@ -926,16 +951,17 @@ function exportPDF() {
     const inchInp = tr.querySelector('.inch-input');
     if (!cmInp) return;
 
+    const itemVal = itemInp.value.trim();
     const cmVal   = cmInp.value.trim();
     const inchVal = inchInp.value.trim();
-    const result  = computeRow(cmVal, inchVal, p);
+    const result  = computeRowOrDefault(itemVal, cmVal, inchVal, p);
     if (!result) return;
 
     body.push([
       String(body.length + 1),
-      itemInp.value.trim() || '-',
+      itemVal || '-',
       cmVal !== '' ? cmVal : '-',
-      result.effInch.toFixed(2),
+      result.effInch.toFixed(2) + (result.isDefault ? ' (base)' : ''),
       fmt(result.price)
     ]);
   });
@@ -979,15 +1005,16 @@ function exportPDF() {
 
   // ── Reference pricing boxes (Base Length Price & Additional/Inch Price) ──
   // Always shown, regardless of whether specific item lengths were entered.
+  // Only the final calculated price is shown — no discount/charges breakdown.
   const boxGap    = 14;
   const boxWidth  = (pageWidth - margin * 2 - boxGap) / 2;
-  const boxHeight = p.baseDiscount > 0 || p.addCharges > 0 || p.addDiscount > 0 ? 56 : 44;
+  const boxHeight = 44;
   const boxY = y;
 
   const baseBoxPrice = p.basePrice * p.defQty / 100;
   const addBoxPrice  = p.addRate   * p.defQty / 100;
 
-  function drawRefBox(x, title, value, noteLine) {
+  function drawRefBox(x, title, value) {
     doc.setDrawColor(26, 138, 114);
     doc.setFillColor(230, 244, 241);
     doc.roundedRect(x, boxY, boxWidth, boxHeight, 5, 5, 'FD');
@@ -995,32 +1022,16 @@ function exportPDF() {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8.5);
     doc.setTextColor(80, 100, 96);
-    doc.text(title, x + 12, boxY + 16);
+    doc.text(title, x + 12, boxY + 17);
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
+    doc.setFontSize(17);
     doc.setTextColor(26, 138, 114);
-    doc.text(value, x + 12, boxY + 34);
-
-    if (noteLine) {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(110, 130, 126);
-      doc.text(noteLine, x + 12, boxY + 47);
-    }
+    doc.text(value, x + 12, boxY + 35);
   }
 
-  let baseNote = '';
-  if (p.baseDiscount > 0 || p.addCharges > 0) {
-    const parts = [];
-    if (p.baseDiscount > 0) parts.push(`${p.baseDiscount}% discount`);
-    if (p.addCharges > 0)   parts.push(`+$${p.addCharges} charges`);
-    baseNote = `(${parts.join(', ')} applied)`;
-  }
-  let addNote = p.addDiscount > 0 ? `(${p.addDiscount}% discount applied)` : '';
-
-  drawRefBox(margin, `Base Length Price (per ${p.defQty} pcs)`, fmt(baseBoxPrice), baseNote);
-  drawRefBox(margin + boxWidth + boxGap, `Additional / Inch Price (per ${p.defQty} pcs)`, fmt(addBoxPrice), addNote);
+  drawRefBox(margin, `Base Length Price (per ${p.defQty} pcs)`, fmt(baseBoxPrice));
+  drawRefBox(margin + boxWidth + boxGap, `Additional / Inch Price (per ${p.defQty} pcs)`, fmt(addBoxPrice));
 
   y = boxY + boxHeight + 22;
 
